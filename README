@@ -1,0 +1,1 @@
+This is a basic Perl script for extracting JPEG tiles from Zoomify images.  It works for the limited sample of images to which I have access but may not work for all Zoomify versions or images.

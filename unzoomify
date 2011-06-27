@@ -1,0 +1,91 @@
+#!/usr/bin/perl -w
+# unzoomify:  extracts JPEG tiles from Zoomify (*.pff) images
+
+use strict;
+use Getopt::Std;
+use File::Basename;
+use File::Spec::Functions;
+
+my %option;
+getopts('hil:o:', \%option);
+
+print_help() and exit if $option{h};
+
+die "No filename given.\n" unless $ARGV[0];
+die "File not found.\n" unless -e $ARGV[0];
+
+my ($data, $level, $tile_index, $header,
+	$jpeg_header, $jpeg_header_length, $outfile);
+my (@headers);
+
+my $jpeg_scan_length = 0;
+
+my ($basename) = fileparse($ARGV[0],(".pff"));
+if ($option{o}) {
+	$basename = -d $option{o} ? catfile($option{o}, $basename) :  $option{o};
+}
+
+# Open image file (or die trying!)
+die "Failed to open file: $!\n" unless open IMAGE, $ARGV[0];
+# Read image metadata
+seek IMAGE, 0x418, 0;
+read IMAGE, $data, 16;
+# n_tiles	number of JPEG tiles contained in the file
+# width		width  of image at full resolution
+# height	height of image at full resolution
+# n_headers number of JPEG headers (one for each different size of tile)
+my ($n_tiles, $width, $height, $n_headers) = unpack "N4", $data;
+
+print_fileinfo() and exit if $option{i};
+
+# Read JPEG headers
+for (0..$n_headers - 1) {
+	read IMAGE, $data, 4;
+	($jpeg_header_length) = unpack "N", $data;
+	read IMAGE, $data, $jpeg_header_length;
+	push @headers, $data;
+}
+
+# Start at the end and work backwards
+seek IMAGE, 0, 2;
+
+while ($n_tiles--) {
+	
+	# Back up to footer (24 bytes) of next tile and read metadata
+	seek IMAGE, -($jpeg_scan_length + 16), 1;
+	read IMAGE, $data, 16;
+	($level, $tile_index, $jpeg_scan_length, $jpeg_header) = unpack "N4", $data;
+
+	# Back up to beginning of JPEG scan data and read image
+	seek IMAGE, -(24 + $jpeg_scan_length), 1;
+	read IMAGE, $data, $jpeg_scan_length;
+
+	# Write corresponding header + scan data (= complete JPEG)
+	unless (defined $option{l} && $level != $option{l}) {
+		open TILE, sprintf ">%s,%02d,%010d.jpg", $basename, $level, $tile_index or die "$!\n";
+		print TILE $headers[$jpeg_header], $data;
+		close TILE;
+	}
+}
+
+exit;
+### SUBROUTINES ###
+sub print_help {
+	print <<HELP
+Usage:  unzoomify [OPTION]... FILE
+Extracts individual JPEG tiles from Zoomify (pff) files
+
+  -o <string>	Set output file prefix (defaults to input file basename)
+  -l <number>	Extract tiles from this resolution only (0 is lowest)
+  -i		Display image metadata
+  -h		Print this message
+HELP
+}
+
+sub print_fileinfo {
+	printf "%s\t%dx%d\t%d tiles\n",
+		basename($ARGV[0]),
+		$width,
+		$height,
+		$n_tiles;
+}
